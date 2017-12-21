@@ -1,0 +1,9 @@
+FROM alpine:latest
+
+LABEL maintainer "Sid Carter <me@sidcarter.com>"
+
+# set some variables in here
+# install azure-cli
+# subst those variables in templates
+# deploy templates to get instances
+# configuring the said instances

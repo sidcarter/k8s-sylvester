@@ -1,0 +1,343 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "nodeVmSize": {
+      "type": "string",
+      "allowedValues": [
+        "Standard_A2",
+        "Standard_A3",
+        "Standard_A4",
+        "Standard_DS4"
+      ],
+      "metadata": {
+        "description": "Instance size for the VMs"
+      }
+    },
+    "controllerVmSize": {
+      "type": "string",
+      "allowedValues": [
+        "Standard_A2",
+        "Standard_A3",
+        "Standard_A4",
+        "Standard_DS4"
+      ],
+      "metadata": {
+        "description": "Instance size for the VMs"
+      }
+    },
+    "vnetName": {
+      "type": "string",
+      "defaultValue": "k8s-sylvester",
+      "metadata": {
+        "description": "Name of VNet"
+      }
+    },
+    "vnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.111.0.0/16",
+      "metadata": {
+        "description": "The VNet CIDR"
+      }
+    },
+    "subnetName": {
+      "type": "string",
+      "defaultValue": "K8SN",
+      "metadata": {
+        "description": "Name of Subnet"
+      }
+    },
+    "subnetPrefix": {
+      "type": "string",
+      "defaultValue": "10.111.0.0/20",
+      "metadata": {
+        "description": "Subnet Address Prefix"
+      }
+    },
+    "podCidrRangePrefix": {
+      "type": "string",
+      "defaultValue": "10.240.0.",
+      "metadata": {
+        "description": "Subnet CIDR Prefix to use for POD CIDRs - Creates a /24"
+      }
+    },
+    "numberOfNodes": {
+      "type": "int",
+      "defaultValue": 3,
+      "metadata": {
+        "description": "Number of nodes to create"
+      }
+    },
+    "numberOfControllers": {
+      "type": "int",
+      "defaultValue": 3,
+      "metadata": {
+        "description": "Number of controllers to create (3 recommended)"
+      }
+    },
+    "vmNamePrefix": {
+      "type": "string",
+      "defaultValue": "k8s",
+      "metadata": {
+        "description": "Prefix to use for VMs"
+      }
+    },
+    "adminUsername": {
+      "type": "string",
+      "defaultValue": "sylvia",
+      "metadata": {
+        "description": "Username to login to the VMs"
+      }
+    },
+    "sshKeyData": {
+      "type": "string",
+      "metadata": {
+        "description": "Public key for SSH authentication"
+      }
+    }
+  },
+  "variables": {
+    "nodeAvailSet": "nodes-as1",
+    "controllerAvailSet": "controllers-as1",
+    "virtualNetworkName": "[parameters('vnetName')]",
+    "addressPrefix": "[parameters('vnetAddressPrefix')]",
+    "vnetID": "[resourceId('Microsoft.Network/virtualNetworks',variables('virtualNetworkName'))]",
+    "subnetName": "[parameters('subnetName')]",
+    "subnetPrefix": "[parameters('subnetPrefix')]",
+    "subnetRef": "[concat(variables('vnetID'),'/subnets/',variables('subnetName'))]",
+    "podCidrRangePrefix": "[parameters('podCidrRangePrefix')]",
+    "controllerVmNamePrefix": "[concat(parameters('vmNamePrefix'),'-controller-')]",
+    "nodeVmNamePrefix": "[concat(parameters('vmNamePrefix'),'-node-')]",
+    "publicIPAddressType": "Static",
+    "computeResouresApiVersion": "2017-12-01",
+    "networkResourcesApiVersion": "2017-11-01",
+    "sshKeyPath": "[concat('/home/',parameters('adminUsername'),'/.ssh/authorized_keys')]",
+    "imageSku": "16.04-LTS"
+  },
+  "resources": [
+    {
+      "apiVersion": "[variables('networkResourcesApiVersion')]",
+      "type": "Microsoft.Network/virtualNetworks",
+      "name": "[variables('virtualNetworkName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[variables('addressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('subnetName')]",
+            "properties": {
+              "addressPrefix": "[variables('subnetPrefix')]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/availabilitySets",
+      "name": "[variables('controllerAvailSet')]",
+      "apiVersion": "[variables('computeResouresApiVersion')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "platformFaultDomainCount": 3
+      },
+      "sku": {
+        "name": "Aligned"
+      }
+    },
+    {
+      "type": "Microsoft.Compute/availabilitySets",
+      "name": "[variables('nodeAvailSet')]",
+      "apiVersion": "[variables('computeResouresApiVersion')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "platformFaultDomainCount": 3
+      },
+      "sku": {
+        "name": "Aligned"
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "[concat(variables('controllerVmNamePrefix'), copyindex(), '-nic')]",
+      "copy": {
+        "name": "nicLoop",
+        "count": "[parameters('numberOfControllers')]"
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]"
+      ],
+      "location": "[resourceGroup().location]",
+      "apiVersion": "[variables('networkResourcesApiVersion')]",
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "[concat(variables('controllerVmNamePrefix'), copyindex(), '-ipconfig')]",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[variables('subnetRef')]"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "[concat(variables('nodeVmNamePrefix'), copyindex(), '-nic')]",
+      "copy": {
+        "name": "nicLoop",
+        "count": "[parameters('numberOfNodes')]"
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]"
+      ],
+      "location": "[resourceGroup().location]",
+      "apiVersion": "[variables('networkResourcesApiVersion')]",
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "[concat(variables('nodeVmNamePrefix'), copyindex(), '-ipconfig')]",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[variables('subnetRef')]"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "[concat(variables('controllerVmNamePrefix'), copyindex())]",
+      "copy": {
+        "name": "controllerLoop",
+        "count": "[parameters('numberOfControllers')]"
+      },
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Compute/availabilitySets/', variables('controllerAvailSet'))]",
+        "[concat('Microsoft.Network/networkInterfaces/', variables('controllerVmNamePrefix'), copyindex(), '-nic')]"
+      ],
+      "apiVersion": "[variables('computeResouresApiVersion')]",
+      "tags": {
+        "cluster": "k8s",
+        "service": "controller",
+        "environment": "[variables('virtualNetworkName')]",
+        "type": "controller"
+      },
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('controllerVmSize')]"
+        },
+        "availabilitySet": {
+          "id": "[resourceId('Microsoft.Compute/availabilitySets', variables('controllerAvailSet'))]"
+        },
+        "osProfile": {
+          "computerName": "[concat(variables('controllerVmNamePrefix'), copyindex())]",
+          "adminUsername": "[parameters('adminUsername')]",
+          "linuxConfiguration": {
+            "disablePasswordAuthentication": true,
+            "ssh": {
+              "publicKeys": [
+                {
+                  "path": "[variables('sshKeyPath')]",
+                  "keyData": "[parameters('sshKeyData')]"
+                }
+              ]
+            }
+          }
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "Canonical",
+            "offer": "UbuntuServer",
+            "sku": "[variables('imageSku')]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "[concat(variables('controllerVmNamePrefix'), copyindex(), '-osdisk')]",
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(variables('controllerVmNamePrefix'), copyindex(), '-nic'))]"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "[concat(variables('nodeVmNamePrefix'), copyindex())]",
+      "copy": {
+        "name": "nodeLoop",
+        "count": "[parameters('numberOfNodes')]"
+      },
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Compute/availabilitySets/', variables('nodeAvailSet'))]",
+        "[concat('Microsoft.Network/networkInterfaces/', variables('nodeVmNamePrefix'), copyindex(), '-nic')]"
+      ],
+      "apiVersion": "[variables('computeResouresApiVersion')]",
+      "tags": {
+        "cluster": "k8s",
+        "service": "node",
+        "environment": "[variables('virtualNetworkName')]",
+        "podcidr": "[concat(variables('podCidrRangePrefix'), copyindex(),'/24')]",
+        "type": "node"
+      },
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('nodeVmSize')]"
+        },
+        "availabilitySet": {
+          "id": "[resourceId('Microsoft.Compute/availabilitySets', variables('nodeAvailSet'))]"
+        },
+        "osProfile": {
+          "computerName": "[concat(variables('nodeVmNamePrefix'), copyindex())]",
+          "adminUsername": "[parameters('adminUsername')]",
+          "linuxConfiguration": {
+            "disablePasswordAuthentication": true,
+            "ssh": {
+              "publicKeys": [
+                {
+                  "path": "[variables('sshKeyPath')]",
+                  "keyData": "[parameters('sshKeyData')]"
+                }
+              ]
+            }
+          }
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "Canonical",
+            "offer": "UbuntuServer",
+            "sku": "[variables('imageSku')]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "[concat(variables('nodeVmNamePrefix'), copyindex(), '-osdisk')]",
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(variables('nodeVmNamePrefix'), copyindex(), '-nic'))]"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
