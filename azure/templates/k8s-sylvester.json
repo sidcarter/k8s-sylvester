@@ -54,9 +54,23 @@
         "description": "Subnet Address Prefix"
       }
     },
+    "securityGroupName": {
+      "type": "string",
+      "defaultValue": "K8SG",
+      "metadata": {
+        "description": "Security Group for Subnet"
+      }
+    },
     "podCidrRangePrefix": {
       "type": "string",
       "defaultValue": "10.240.0.",
+      "metadata": {
+        "description": "Subnet CIDR Prefix to use for POD CIDRs - Creates a /24"
+      }
+    },
+    "clusterCidr": {
+      "type": "string",
+      "defaultValue": "10.200.0.0/16",
       "metadata": {
         "description": "Subnet CIDR Prefix to use for POD CIDRs - Creates a /24"
       }
@@ -105,6 +119,7 @@
     "routeTableName": "[concat(parameters('clusterNamePrefix'),'-routetable')]",
     "subnetName": "[parameters('subnetName')]",
     "subnetPrefix": "[parameters('subnetPrefix')]",
+    "clusterCidr": "[parameters('clusterCidr')]",
     "subnetRef": "[concat(variables('vnetID'),'/subnets/',variables('subnetName'))]",
     "podCidrRangePrefix": "[parameters('podCidrRangePrefix')]",
     "controllerVmNamePrefix": "[concat(parameters('clusterNamePrefix'),'-controller-')]",
@@ -126,6 +141,9 @@
       "type": "Microsoft.Network/virtualNetworks",
       "name": "[variables('virtualNetworkName')]",
       "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Network/networkSecurityGroups/', parameters('securityGroupName'))]"
+      ],
       "properties": {
         "addressSpace": {
           "addressPrefixes": [
@@ -136,7 +154,62 @@
           {
             "name": "[variables('subnetName')]",
             "properties": {
-              "addressPrefix": "[variables('subnetPrefix')]"
+              "addressPrefix": "[variables('subnetPrefix')]",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups',parameters('securityGroupName'))]"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "[variables('networkResourcesApiVersion')]",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "name": "[parameters('securityGroupName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "allow-all-from-cluster",
+            "properties": {
+              "description": "allow everything from cluster",
+              "protocol": "*",
+              "sourcePortRange": "*",
+              "destinationPortRange": "*",
+              "sourceAddressPrefix": "[variables('clusterCidr')]",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 100,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "allow-all-from-subnet",
+            "properties": {
+              "description": "allow everything from vnet",
+              "protocol": "*",
+              "sourcePortRange": "*",
+              "destinationPortRange": "*",
+              "sourceAddressPrefix": "[variables('subnetPrefix')]",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 110,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "allow-ssh",
+            "properties": {
+              "description": "allow ",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "22",
+              "sourceAddressPrefix": "Internet",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 120,
+              "direction": "Inbound"
             }
           }
         ]
@@ -341,6 +414,7 @@
       "tags": {
         "cluster": "k8s",
         "service": "controller",
+        "clustercidr": "[variables('clusterCidr')]",
         "environment": "[variables('virtualNetworkName')]",
         "type": "controller"
       },
@@ -404,6 +478,7 @@
       "tags": {
         "cluster": "k8s",
         "service": "node",
+        "clustercidr": "[variables('clusterCidr')]",
         "environment": "[variables('virtualNetworkName')]",
         "podcidr": "[concat(variables('podCidrRangePrefix'), copyindex(),'/24')]",
         "type": "node"
