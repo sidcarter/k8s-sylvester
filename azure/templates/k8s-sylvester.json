@@ -28,7 +28,7 @@
     },
     "vnetName": {
       "type": "string",
-      "defaultValue": "k8s-sylvester",
+      "defaultValue": "k8s",
       "metadata": {
         "description": "Name of VNet"
       }
@@ -75,7 +75,7 @@
         "description": "Number of controllers to create (3 recommended)"
       }
     },
-    "vmNamePrefix": {
+    "clusterNamePrefix": {
       "type": "string",
       "defaultValue": "k8s",
       "metadata": {
@@ -102,17 +102,23 @@
     "virtualNetworkName": "[parameters('vnetName')]",
     "addressPrefix": "[parameters('vnetAddressPrefix')]",
     "vnetID": "[resourceId('Microsoft.Network/virtualNetworks',variables('virtualNetworkName'))]",
+    "routeTableName": "[concat(parameters('clusterNamePrefix'),'-routetable')]",
     "subnetName": "[parameters('subnetName')]",
     "subnetPrefix": "[parameters('subnetPrefix')]",
     "subnetRef": "[concat(variables('vnetID'),'/subnets/',variables('subnetName'))]",
     "podCidrRangePrefix": "[parameters('podCidrRangePrefix')]",
-    "controllerVmNamePrefix": "[concat(parameters('vmNamePrefix'),'-controller-')]",
-    "nodeVmNamePrefix": "[concat(parameters('vmNamePrefix'),'-node-')]",
+    "controllerVmNamePrefix": "[concat(parameters('clusterNamePrefix'),'-controller-')]",
+    "nodeVmNamePrefix": "[concat(parameters('clusterNamePrefix'),'-node-')]",
+    "publicIPAddressName": "[concat(parameters('clusterNamePrefix'),'-publicip')]",
     "publicIPAddressType": "Static",
+    "loadBalancerName":"[concat(parameters('clusterNamePrefix'),'-lb')]",
+    "loadBalancerId": "[resourceId('Microsoft.Network/loadBalancers',variables('loadBalancerName'))]",
     "computeResouresApiVersion": "2017-12-01",
     "networkResourcesApiVersion": "2017-11-01",
     "sshKeyPath": "[concat('/home/',parameters('adminUsername'),'/.ssh/authorized_keys')]",
-    "imageSku": "16.04-LTS"
+    "imagePublisher": "Canonical",
+    "imageOffer": "UbuntuServer",
+    "imageSku": "17.10"
   },
   "resources": [
     {
@@ -134,6 +140,100 @@
             }
           }
         ]
+      }
+    },
+    {
+      "apiVersion": "[variables('networkResourcesApiVersion')]",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "[variables('publicIPAddressName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "publicIPAllocationMethod": "[variables('publicIPAddressType')]",
+        "dnsSettings": {
+          "domainNameLabel": "[concat(parameters('clusterNamePrefix'),'-public')]"
+        }
+      }
+    },
+    {
+      "apiVersion": "[variables('networkResourcesApiVersion')]",
+      "name": "[variables('loadBalancerName')]",
+      "type": "Microsoft.Network/loadBalancers",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]"
+      ],
+      "properties": {
+        "frontendIPConfigurations": [
+          {
+            "name": "loadBalancerFrontEnd",
+            "properties": {
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses',variables('publicIPAddressName'))]"
+              }
+            }
+          }
+        ],
+        "backendAddressPools": [
+          {
+            "name": "loadBalancerBackEnd"
+          }
+        ],
+        "inboundNatRules": [],
+        "loadBalancingRules": [
+          {
+            "name": "lbRuleApiServer",
+            "properties": {
+              "backendAddressPool": {
+                "id": "[concat(variables('loadBalancerId'), '/backendAddressPools/loadBalancerBackend')]"
+              },
+              "backendPort": 6443,
+              "enableFloatingIP": false,
+              "frontendIPConfiguration": {
+                "id": "[concat(variables('loadBalancerId'), '/frontendIPConfigurations/loadBalancerFrontEnd')]"
+              },
+              "frontendPort": 6443,
+              "idleTimeoutInMinutes": 5,
+              "loadDistribution": "Default",
+              "probe": {
+                "id": "[concat(variables('loadBalancerId'),'/probes/tcpprobe6443')]"
+              },
+              "protocol": "Tcp"
+            }
+          }
+        ],
+        "probes": [
+          {
+            "name": "tcpprobe6443",
+            "properties": {
+              "intervalInSeconds": 10,
+              "numberOfProbes": 2,
+              "port": 6443,
+              "protocol": "Tcp"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "[variables('networkResourcesApiVersion')]",
+      "type": "Microsoft.Network/loadBalancers/inboundNatRules",
+      "name": "[concat(variables('loadBalancerName'), '/sshController-', copyIndex())]",
+      "location": "[resourceGroup().location]",
+      "copy": {
+        "name": "lbNatLoop",
+        "count": "[parameters('numberOfControllers')]"
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/loadBalancers/', variables('loadBalancerName'))]"
+      ],
+      "properties": {
+        "frontendIPConfiguration": {
+          "id": "[concat(variables('loadBalancerId'), '/frontendIPConfigurations/loadBalancerFrontEnd')]"
+        },
+        "protocol": "tcp",
+        "frontendPort": "[copyIndex(5422)]",
+        "backendPort": 22,
+        "enableFloatingIP": false
       }
     },
     {
@@ -168,7 +268,9 @@
         "count": "[parameters('numberOfControllers')]"
       },
       "dependsOn": [
-        "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]"
+        "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+        "[resourceId('Microsoft.Network/loadBalancers',variables('loadBalancerName'))]",
+        "[concat(variables('loadBalancerId'),'/inboundNatRules/sshController-', copyIndex())]"
       ],
       "location": "[resourceGroup().location]",
       "apiVersion": "[variables('networkResourcesApiVersion')]",
@@ -180,7 +282,17 @@
               "privateIPAllocationMethod": "Dynamic",
               "subnet": {
                 "id": "[variables('subnetRef')]"
-              }
+              },
+              "loadBalancerBackendAddressPools": [
+                {
+                  "id": "[concat(variables('loadBalancerId'), '/backendAddressPools/loadBalancerBackend')]"
+                }
+              ],
+              "loadBalancerInboundNatRules": [
+                {
+                  "id": "[concat(variables('loadBalancerId'),'/inboundNatRules/sshController-', copyindex())]"
+                }
+              ]
             }
           }
         ]
@@ -199,6 +311,7 @@
       "location": "[resourceGroup().location]",
       "apiVersion": "[variables('networkResourcesApiVersion')]",
       "properties": {
+        "enableIPForwarding": true,
         "ipConfigurations": [
           {
             "name": "[concat(variables('nodeVmNamePrefix'), copyindex(), '-ipconfig')]",
@@ -255,8 +368,8 @@
         },
         "storageProfile": {
           "imageReference": {
-            "publisher": "Canonical",
-            "offer": "UbuntuServer",
+            "publisher": "[variables('imagePublisher')]",
+            "offer": "[variables('imageOffer')]",
             "sku": "[variables('imageSku')]",
             "version": "latest"
           },
@@ -319,8 +432,8 @@
         },
         "storageProfile": {
           "imageReference": {
-            "publisher": "Canonical",
-            "offer": "UbuntuServer",
+            "publisher": "[variables('imagePublisher')]",
+            "offer": "[variables('imageOffer')]",
             "sku": "[variables('imageSku')]",
             "version": "latest"
           },
@@ -339,5 +452,11 @@
         }
       }
     }
-  ]
+  ],
+  "outputs": {
+    "whereToGo": {
+      "value": "[reference(variables('publicIPAddressName')).dnsSettings.fqdn]",
+      "type": "string"
+    }
+  }
 }
