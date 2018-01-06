@@ -8,6 +8,7 @@
         "Standard_A2",
         "Standard_A3",
         "Standard_A4",
+        "Standard_DS3",
         "Standard_DS4"
       ],
       "metadata": {
@@ -20,6 +21,7 @@
         "Standard_A2",
         "Standard_A3",
         "Standard_A4",
+        "Standard_DS3",
         "Standard_DS4"
       ],
       "metadata": {
@@ -133,7 +135,9 @@
     "sshKeyPath": "[concat('/home/',parameters('adminUsername'),'/.ssh/authorized_keys')]",
     "imagePublisher": "Canonical",
     "imageOffer": "UbuntuServer",
-    "imageSku": "17.10"
+    "imageSku": "17.10",
+    "scriptsPath": "https://raw.githubusercontent.com/sidcarter/k8s-sylvester/master/azure/scripts/",
+    "scriptName": "bootstrap.sh"
   },
   "resources": [
     {
@@ -460,7 +464,30 @@
             }
           ]
         }
-      }
+      },
+      "resources": [
+        {
+          "type": "extensions",
+          "name": "[concat(variables('controllerVmNamePrefix'), copyindex(), '-bootstrap')]",
+          "apiVersion": "[variables('computeResouresApiVersion')]",
+          "location": "[resourceGroup().location]",
+          "dependsOn": [
+            "[concat('Microsoft.Compute/virtualMachines/', variables('controllerVmNamePrefix'), copyindex())]"
+          ],
+          "properties": {
+            "publisher": "Microsoft.Azure.Extensions",
+            "type": "CustomScript",
+            "typeHandlerVersion": "2.0",
+            "autoUpgradeMinorVersion": true,
+            "settings": {
+              "fileUris": [
+                "[concat(variables('scriptsPath'), variables('scriptName'))]"
+              ],
+              "commandToExecute": "[concat('bash ', variables('scriptName'))]"
+            }
+          }
+        }
+      ]
     },
     {
       "type": "Microsoft.Compute/virtualMachines",
@@ -525,7 +552,30 @@
             }
           ]
         }
-      }
+      },
+      "resources": [
+        {
+          "type": "extensions",
+          "name": "[concat(variables('nodeVmNamePrefix'), copyindex(), '-bootstrap')]",
+          "apiVersion": "[variables('computeResouresApiVersion')]",
+          "location": "[resourceGroup().location]",
+          "dependsOn": [
+            "[concat('Microsoft.Compute/virtualMachines/', variables('nodeVmNamePrefix'), copyindex())]"
+          ],
+          "properties": {
+            "publisher": "Microsoft.Azure.Extensions",
+            "type": "CustomScript",
+            "typeHandlerVersion": "2.0",
+            "autoUpgradeMinorVersion": true,
+            "settings": {
+              "fileUris": [
+                "[concat(variables('scriptsPath'), variables('scriptName'))]"
+              ],
+              "commandToExecute": "[concat('bash ', variables('scriptName'))]"
+            }
+          }
+        }
+      ]
     }
   ],
   "outputs": {
